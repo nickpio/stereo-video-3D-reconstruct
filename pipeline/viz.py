@@ -170,3 +170,80 @@ def make_lidar_error_heatmap(
 ) -> np.ndarray:
     """Thin wrapper around evaluation.make_depth_error_heatmap for convenience in viz flows."""
     return eval_mod.make_depth_error_heatmap(pred_depth, gt_depth, **kwargs)
+
+
+def save_side_by_side_3d_preview(
+    classical_points: np.ndarray,
+    classical_colors: Optional[np.ndarray],
+    neural_points: np.ndarray,
+    neural_colors: Optional[np.ndarray],
+    out_png: str | Path,
+    *,
+    title: str = "Classical vs Neural - Final 3D Reconstruction",
+    max_points: int = 15000,
+) -> None:
+    """Create a side-by-side 3D comparison of the final fused point clouds.
+
+    Uses matplotlib with two 3D subplots (reliable fallback).
+    When Open3D is available in the future, we can add interactive side-by-side viewers.
+
+    Prefers the highest quality data available (e.g. TSDF surface points over raw accumulation).
+    """
+    import matplotlib.pyplot as plt
+    from pathlib import Path as _Path
+
+    out_path = _Path(out_png)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def prepare(pts, cols):
+        if len(pts) == 0:
+            return None, None
+        if len(pts) > max_points:
+            idx = np.random.choice(len(pts), max_points, replace=False)
+            pts = pts[idx]
+            cols = cols[idx] / 255.0 if cols is not None and len(cols) > 0 else None
+        else:
+            cols = cols / 255.0 if cols is not None and len(cols) > 0 else None
+        return pts, cols
+
+    c_pts, c_cols = prepare(classical_points, classical_colors)
+    n_pts, n_cols = prepare(neural_points, neural_colors)
+
+    if c_pts is None and n_pts is None:
+        return
+
+    fig = plt.figure(figsize=(12, 5))
+
+    # Classical
+    ax1 = fig.add_subplot(121, projection="3d")
+    if c_pts is not None:
+        if c_cols is not None:
+            ax1.scatter(c_pts[:, 0], c_pts[:, 1], c_pts[:, 2], c=c_cols, s=1, alpha=0.6)
+        else:
+            ax1.scatter(c_pts[:, 0], c_pts[:, 1], c_pts[:, 2], s=1, alpha=0.5, c=c_pts[:, 2])
+    ax1.set_title("Classical (SGBM + Fusion)")
+    ax1.set_xlabel("X (m)")
+    ax1.set_ylabel("Y (m)")
+    ax1.set_zlabel("Z (m)")
+    ax1.view_init(elev=20, azim=-60)
+
+    # Neural
+    ax2 = fig.add_subplot(122, projection="3d")
+    if n_pts is not None:
+        if n_cols is not None:
+            ax2.scatter(n_pts[:, 0], n_pts[:, 1], n_pts[:, 2], c=n_cols, s=1, alpha=0.6)
+        else:
+            ax2.scatter(n_pts[:, 0], n_pts[:, 1], n_pts[:, 2], s=1, alpha=0.5, c=n_pts[:, 2])
+    ax2.set_title("Neural (Depth-Anything + Fusion)")
+    ax2.set_xlabel("X (m)")
+    ax2.set_ylabel("Y (m)")
+    ax2.set_zlabel("Z (m)")
+    ax2.view_init(elev=20, azim=-60)
+
+    fig.suptitle(title, fontsize=14)
+    fig.tight_layout()
+
+    fig.savefig(out_path, dpi=140, bbox_inches="tight")
+    plt.close(fig)
+
+    print(f"  Saved side-by-side 3D comparison: {out_path}")

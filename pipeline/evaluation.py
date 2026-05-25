@@ -3,8 +3,14 @@
 Uses the existing project_lidar_to_image capability in the loader for
 sparse but accurate per-pixel GT depths in the left camera image plane.
 
-Provides standard depth estimation metrics (MAE, RMSE, AbsRel, etc.) used
-in monocular/stereo depth papers on nuScenes, KITTI, etc.
+**Important**: Both classical SGBM and Depth-Anything-V2 can have large
+scale bias. This module therefore reports two sets of metrics per method:
+- Raw (as produced by the reconstruction)
+- "aligned": after robust median scaling to the LiDAR GT on that frame.
+  The aligned numbers are the ones you should trust for absolute error.
+
+Provides standard depth estimation metrics (MAE, RMSE, AbsRel, δ<1.25, etc.)
+used in monocular/stereo depth papers on nuScenes, KITTI, etc.
 
 Also generates error heatmaps for visualization.
 """
@@ -160,14 +166,32 @@ def evaluate_frame_depths(
         n_sampled, gt_depths, valid_mask=None, min_depth=min_depth, max_depth=max_depth
     )
 
-    # Compute % valid (completeness): fraction of projected LiDAR points that have valid predictions
-    # (non-nan, within min/max depth after metrics filtering)
+    # Compute % valid (completeness)
     num_proj = len(gt_depths)
     pct_valid_classical = (classical_metrics.get("num_valid", 0) / num_proj * 100.0) if num_proj > 0 else 0.0
     pct_valid_neural = (neural_metrics.get("num_valid", 0) / num_proj * 100.0) if num_proj > 0 else 0.0
 
     classical_metrics["percent_valid"] = float(pct_valid_classical)
     neural_metrics["percent_valid"] = float(pct_valid_neural)
+
+    # === Critical: also compute scale-aligned metrics to LiDAR ===
+    # This makes absolute numbers (MAE, RMSE, delta thresholds) meaningful
+    # even when the raw predictions have large scale bias.
+    classical_aligned = align_depth_to_lidar(classical_depth, gt_depths, uv)
+    neural_aligned = align_depth_to_lidar(neural_depth, gt_depths, uv)
+
+    c_aligned_sampled = classical_aligned[vs, us]
+    n_aligned_sampled = neural_aligned[vs, us]
+
+    classical_aligned_m = compute_depth_metrics(
+        c_aligned_sampled, gt_depths, valid_mask=None, min_depth=min_depth, max_depth=max_depth
+    )
+    neural_aligned_m = compute_depth_metrics(
+        n_aligned_sampled, gt_depths, valid_mask=None, min_depth=min_depth, max_depth=max_depth
+    )
+
+    classical_metrics["aligned"] = classical_aligned_m
+    neural_metrics["aligned"] = neural_aligned_m
 
     return {
         "classical": classical_metrics,
@@ -238,3 +262,43 @@ def add_error_to_comparison_panel(
 
     combined = np.vstack([base_panel, err_resized])
     return combined
+
+
+def align_depth_to_lidar(
+    pred_depth: np.ndarray,
+    lidar_depths: np.ndarray,
+    uv: np.ndarray,
+) -> np.ndarray:
+    """Robustly scale a (possibly relative) depth map to metric LiDAR.
+
+    Tries both direct and inverse scaling hypotheses using median and picks
+    the one with lower relative error on the sparse LiDAR points.
+    """
+    if len(lidar_depths) < 10:
+        return pred_depth
+
+    h, w = pred_depth.shape
+    us = np.clip(uv[:, 0].astype(int), 0, w - 1)
+    vs = np.clip(uv[:, 1].astype(int), 0, h - 1)
+    pred_sparse = pred_depth[vs, us]
+
+    mask = (lidar_depths > 0.5) & (pred_sparse > 0.5)
+    if mask.sum() < 5:
+        return pred_depth
+
+    ref = lidar_depths[mask]
+    pred = pred_sparse[mask]
+
+    # Direct scaling
+    s1 = np.median(ref / np.maximum(pred, 1e-6))
+    aligned1 = s1 * pred_depth
+
+    # Inverse scaling (very common for monocular networks)
+    s2 = np.median(ref * np.maximum(pred, 1e-6))
+    aligned2 = s2 / np.maximum(pred_depth, 1e-6)
+
+    def median_rel_err(aligned):
+        a = aligned[vs[mask], us[mask]]
+        return np.median(np.abs(ref - a) / (ref + 1e-6))
+
+    return aligned1 if median_rel_err(aligned1) < median_rel_err(aligned2) else aligned2

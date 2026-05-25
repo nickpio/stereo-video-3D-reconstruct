@@ -38,6 +38,7 @@ from pipeline.viz import (
     export_depth_video,
     make_comparison_image,
     save_comparison_png,
+    save_side_by_side_3d_preview,
     simple_pointcloud_preview,
 )
 
@@ -137,13 +138,20 @@ def main() -> int:
     if rec.eval_summary.get("has_lidar_eval"):
         print(f"  Eval (LiDAR): classical_mae={rec.eval_summary.get('classical_mean_mae'):.2f}, "
               f"neural_mae={rec.eval_summary.get('neural_mean_mae'):.2f}")
-        # Item 1: Show per-frame % valid (completeness) for hard evidence
         if rec.frames:
             first_eval = rec.frames[0].eval_results
-            c_pct = first_eval.get("classical", {}).get("percent_valid", 0)
-            n_pct = first_eval.get("neural", {}).get("percent_valid", 0)
-            print(f"         % valid pixels: classical={c_pct:.1f}%, neural={n_pct:.1f}% "
+            c = first_eval.get("classical", {})
+            n = first_eval.get("neural", {})
+            print(f"         % valid pixels: classical={c.get('percent_valid', 0):.1f}%, "
+                  f"neural={n.get('percent_valid', 0):.1f}% "
                   f"(out of {first_eval.get('num_lidar_points_projected', 0)} LiDAR projections)")
+
+            # Show scale-aligned metrics (the trustworthy ones)
+            c_al = c.get("aligned", {})
+            n_al = n.get("aligned", {})
+            if c_al:
+                print(f"         [Scale-aligned to LiDAR]  classical_mae={c_al.get('mae', float('nan')):.2f}, "
+                      f"neural_mae={n_al.get('mae', float('nan')):.2f}")
 
     # 4. Export point clouds + stats
     print("\n[4/5] Exporting point clouds and stats...")
@@ -207,6 +215,24 @@ def main() -> int:
                 out_png=out_dir / "preview_lidar_3d.png",
             )
 
+        # Item 5: Side-by-side comparison of the final fused 3D reconstructions
+        # Prefer TSDF surface data when available (higher quality)
+        c_pts = rec.tsdf_classical.points if rec.tsdf_classical and rec.tsdf_classical.has_surface else rec.global_points_classical
+        c_cols = rec.tsdf_classical.colors if rec.tsdf_classical and rec.tsdf_classical.has_surface else rec.global_colors_classical
+
+        n_pts = rec.tsdf_neural.points if rec.tsdf_neural and rec.tsdf_neural.has_surface else rec.global_points_neural
+        n_cols = rec.tsdf_neural.colors if rec.tsdf_neural and rec.tsdf_neural.has_surface else rec.global_colors_neural
+
+        if (c_pts is not None and len(c_pts) > 0) or (n_pts is not None and len(n_pts) > 0):
+            save_side_by_side_3d_preview(
+                c_pts if c_pts is not None else np.empty((0, 3)),
+                c_cols,
+                n_pts if n_pts is not None else np.empty((0, 3)),
+                n_cols,
+                out_png=out_dir / "preview_3d_comparison.png",
+                title=f"Classical vs Neural - {scene_name} (Final Fused)",
+            )
+
     # Final summary
     print("\n" + "=" * 60)
     print("DONE. Reconstruction complete.")
@@ -222,6 +248,7 @@ def main() -> int:
     print("  - reconstruction_stats.json: summary numbers + eval (if --eval)")
     if args.save_previews:
         print("  - preview_*_3d.png         : quick 3D scatter previews")
+        print("  - preview_3d_comparison.png: side-by-side classical vs neural fused reconstruction (Item 5)")
     if neural_model is None:
         print("  (Re-ran with neural model for full comparison: pip install torch transformers)")
 

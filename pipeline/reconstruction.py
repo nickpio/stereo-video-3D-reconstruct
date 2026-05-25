@@ -195,6 +195,20 @@ def process_frame(
 
         neural_depth = neural_depth_rel  # already aligned inside if ref given
 
+        # Prefer direct LiDAR alignment when available (much better scale for absolute metrics)
+        if pair.lidar_filepath:
+            try:
+                from pipeline import evaluation as eval_mod_local
+                lidar_world = loader.load_lidar_points(pair, in_world=True)
+                uv, gt_depths = loader.project_lidar_to_image(
+                    lidar_world, pair.left, img_shape=neural_depth.shape[:2]
+                )
+                if len(gt_depths) > 20:
+                    neural_depth = eval_mod_local.align_depth_to_lidar(neural_depth, gt_depths, uv)
+                    neural_info["aligned_to_lidar"] = True
+            except Exception:
+                pass
+
         # Backproject using original intrinsics + neural_depth (now metric)
         # Note: neural_depth may be at slightly different resolution if model resized, but HF post restores orig
         pts_n_cam, n_mask = backproject_depth_to_cam(
