@@ -59,6 +59,9 @@ def parse_args() -> argparse.Namespace:
                    help="Multi-frame fusion mode: 'points' (default, fast) or 'tsdf' (dense surface, requires open3d)")
     p.add_argument("--eval", action="store_true", help="Compute quantitative metrics vs LiDAR GT (uses project_lidar)")
     p.add_argument("--voxel-size", type=float, default=0.08, help="TSDF voxel size (meters) when --fusion tsdf")
+    # Item 3
+    p.add_argument("--neural-model", choices=["mono", "stereo"], default="mono",
+                   help="Neural depth model type (mono = default Depth-Anything-V2, stereo = stereo-consistent variant)")
     return p.parse_args()
 
 
@@ -97,11 +100,16 @@ def main() -> int:
     # 2. Neural model (optional)
     neural_model = None
     if not args.no_neural:
-        print("\n[2/5] Loading neural depth model (Depth-Anything-V2-Small, may download ~100MB)...")
+        model_type = args.neural_model
+        print(f"\n[2/5] Loading neural depth model ({model_type}) (Depth-Anything-V2-Small, may download ~100MB)...")
         try:
-            from pipeline.neural_depth import load_depth_model
-            neural_model = load_depth_model(device=args.device, force_cpu=(args.device == "cpu"))
-            print(f"  Model loaded on {neural_model['device']}")
+            if model_type == "stereo":
+                from pipeline.stereo_depth import load_stereo_depth_model
+                neural_model = load_stereo_depth_model(device=args.device, force_cpu=(args.device == "cpu"))
+            else:
+                from pipeline.neural_depth import load_depth_model
+                neural_model = load_depth_model(device=args.device, force_cpu=(args.device == "cpu"))
+            print(f"  Model loaded on {neural_model['device']} (type={model_type})")
         except Exception as e:
             print(f"  WARNING: Could not load neural model ({e}). Continuing with classical only.")
             neural_model = None
@@ -121,6 +129,7 @@ def main() -> int:
         fusion_mode=args.fusion,
         do_eval=args.eval,
         tsdf_voxel_size=args.voxel_size,
+        neural_model_type=args.neural_model,  # Item 3
     )
     print(f"  Done in {time.time()-t1:.1f}s. "
           f"Points: classical={rec.stats.get('total_points_classical',0):,}, "

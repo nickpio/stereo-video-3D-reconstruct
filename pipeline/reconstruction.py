@@ -31,6 +31,7 @@ from pipeline.nuscenes_loader import (
     CameraData,
     NuScenesStereoLoader,
     StereoPair,
+    get_stereo_calibration,
 )
 from pipeline import evaluation as eval_mod
 from pipeline import fusion as fusion_mod
@@ -137,6 +138,7 @@ def process_frame(
     max_depth: float = 80.0,
     neural_align: bool = True,
     max_points_per_frame: int = 120_000,
+    neural_model_type: str = "mono",  # "mono" or "stereo" (Item 3)
 ) -> FrameResult:
     """Run full classical + neural on one stereo pair. Return FrameResult with world points."""
     left_img = loader.load_image(pair.left)
@@ -171,9 +173,26 @@ def process_frame(
     cols_n = np.empty((0, 3), np.uint8)
 
     if neural_model is not None:
-        neural_depth_rel, neural_info = compute_neural_depth(
-            left_img, neural_model, ref_depth=classical_out["depth_rect"], align=neural_align
-        )
+        if neural_model_type == "stereo":
+            # Item 3: use stereo-aware path (currently consistency wrapper around mono)
+            from pipeline.stereo_depth import compute_stereo_neural_depth
+            try:
+                stereo_calib = get_stereo_calibration(pair)  # from nuscenes_loader
+            except Exception:
+                stereo_calib = None
+
+            neural_depth_rel, neural_info = compute_stereo_neural_depth(
+                left_img, right_img, neural_model,
+                stereo_calib=stereo_calib,
+                ref_depth=classical_out["depth_rect"],
+                align=neural_align
+            )
+        else:
+            # Default mono path
+            neural_depth_rel, neural_info = compute_neural_depth(
+                left_img, neural_model, ref_depth=classical_out["depth_rect"], align=neural_align
+            )
+
         neural_depth = neural_depth_rel  # already aligned inside if ref given
 
         # Backproject using original intrinsics + neural_depth (now metric)
@@ -236,6 +255,7 @@ def accumulate_reconstruction(
     fusion_mode: str = "points",
     do_eval: bool = False,
     tsdf_voxel_size: float = 0.08,
+    neural_model_type: str = "mono",  # "mono" or "stereo" (Item 3)
     **kwargs,
 ) -> Reconstruction:
     """Process a list of stereo pairs into a full reconstruction."""
@@ -262,6 +282,7 @@ def accumulate_reconstruction(
             loader, pair,
             neural_model=neural_model,
             max_points_per_frame=max_points_per_frame,
+            neural_model_type=neural_model_type,
         )
         frames.append(fr)
         if len(fr.world_points_classical) > 0:
