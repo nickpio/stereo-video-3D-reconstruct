@@ -1,0 +1,24 @@
+# Core
+numpy>=1.23
+opencv-python-headless>=4.8
+Pillow>=9.0
+matplotlib>=3.7
+tqdm>=4.65
+scipy>=1.10
+
+# NuScenes
+nuscenes-devkit>=1.1.10
+pyquaternion>=0.9.9
+
+# ML / Neural depth
+torch>=2.0.0
+torchvision>=0.15.0
+transformers>=4.30.0
+# accelerate optional for faster HF loading
+
+# 3D viz / export
+open3d>=0.17.0
+
+# Utils
+pyyaml>=6.0
+# imageio[ffmpeg] optional for video if cv2 writer insufficient

@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtualenv
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+outputs/
+*.ply
+*.mp4
+*.avi
+*.png
+*.jpg
+!docs/*.png
+!pipeline/assets/*.png
+
+# Model caches (transformers, torch)
+.cache/
+huggingface/
+torch/hub/
+
+# nuscenes
+data/
+v1.0-*/
+*.log
+
+# Large data
+*.bin
+*.pcd
+*.bag
