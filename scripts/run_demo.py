@@ -208,6 +208,7 @@ def main() -> int:
             fr.classical_depth,
             fr.neural_depth if fr.neural_depth is not None else fr.classical_depth,
             title=f"{scene_name} frame {i+1}/{len(rec.frames)}",
+            frame_eval=fr.eval_results,
         )
         panels.append(panel)
 

@@ -364,11 +364,6 @@ def accumulate_reconstruction(
             eval_summary["frames_with_sufficient_lidar"] += 1
             eval_summary["frames_with_eval"] += 1
             er["used_for_summary"] = True
-        elif er.get("has_lidar"):
-            er["used_for_summary"] = False
-            eval_summary["has_lidar_eval"] = True
-        else:
-            er["used_for_summary"] = False
 
             c = er.get("classical", {})
             n = er.get("neural", {})
@@ -383,9 +378,13 @@ def accumulate_reconstruction(
                 classical_maes_aligned.append(c["aligned"]["mae"])
             if "aligned" in n and "mae" in n["aligned"]:
                 neural_maes_aligned.append(n["aligned"]["mae"])
+
         elif er.get("has_lidar"):
-            # Frame had LiDAR but not enough points → still mark that we saw LiDAR data
+            # Frame had some LiDAR but below threshold
+            er["used_for_summary"] = False
             eval_summary["has_lidar_eval"] = True
+        else:
+            er["used_for_summary"] = False
 
     if classical_maes:
         eval_summary["classical_mean_mae"] = float(np.mean(classical_maes))

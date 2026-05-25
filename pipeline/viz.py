@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import matplotlib.pyplot as plt
@@ -27,8 +27,13 @@ def make_comparison_image(
     vmin: float = 2.0,
     vmax: float = 60.0,
     target_width: int = 1600,
+    frame_eval: Optional[Dict[str, Any]] = None,
 ) -> np.ndarray:
-    """Create 2x2 comparison panel (BGR). Resizes to fit target_width."""
+    """Create 2x2 comparison panel (BGR). Resizes to fit target_width.
+
+    If frame_eval is provided, low-validity methods get a clear "No valid depth"
+    overlay with key metrics for transparency.
+    """
     h, w = left_bgr.shape[:2]
 
     # Make sure depth maps match left resolution (nearest resize if rect vs orig differ)
@@ -77,6 +82,42 @@ def make_comparison_image(
 
     if title:
         cv2.putText(panel, title, (10, panel_h - 10), font, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
+
+    # === Handle low-validity frames with clear overlays (Item 5 polish) ===
+    if frame_eval is not None:
+        def add_no_valid_overlay(target_img, method_name, metrics, x_offset, y_offset):
+            """Draw semi-transparent box + text overlay for invalid depth."""
+            overlay = target_img.copy()
+            box_h, box_w = small_h // 2, small_w - 20
+            cv2.rectangle(overlay, (x_offset + 10, y_offset + 30),
+                          (x_offset + 10 + box_w, y_offset + 30 + box_h),
+                          (0, 0, 0), -1)
+            alpha = 0.75
+            cv2.addWeighted(overlay, alpha, target_img, 1 - alpha, 0, target_img)
+
+            # Main message
+            cv2.putText(target_img, "No valid depth", (x_offset + 20, y_offset + 55),
+                        font, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
+
+            # Metrics
+            pct = metrics.get("percent_valid", 0)
+            mae = metrics.get("mae", float("nan"))
+            text = f"{pct:.1f}% valid | MAE={mae:.1f}"
+            cv2.putText(target_img, text, (x_offset + 20, y_offset + 80),
+                        font, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+
+        c_eval = frame_eval.get("classical", {})
+        n_eval = frame_eval.get("neural", {})
+
+        # Threshold for "no valid" (can be tuned)
+        c_bad = c_eval.get("percent_valid", 100) < 5 or c_eval.get("num_valid", 9999) < 200
+        n_bad = n_eval.get("percent_valid", 100) < 5 or n_eval.get("num_valid", 9999) < 200
+
+        if c_bad:
+            add_no_valid_overlay(panel, "Classical", c_eval, small_w + gap, 0)
+
+        if n_bad:
+            add_no_valid_overlay(panel, "Neural", n_eval, 0, small_h + gap)
 
     return panel
 
