@@ -148,6 +148,7 @@ def process_frame(
     classical_out = compute_classical_stereo(
         pair, left_img, right_img,
         min_depth=min_depth, max_depth=max_depth,
+        use_wls=True,   # WLS post-filtering for much better classical disparity density
     )
     classical_depth = classical_out["depth_rect"]  # in rectified, but close enough; for viz we can warp or use as proxy
     # For consistency with neural (original res), re-unproject using original K on the depth we have?
@@ -339,24 +340,62 @@ def accumulate_reconstruction(
     except Exception as e:
         print(f"  [warn] Could not load LiDAR reference: {e}")
 
-    # Simple aggregate eval summary from per-frame results
-    eval_summary: Dict[str, Any] = {"has_lidar_eval": False, "frames_with_eval": 0}
+    # Simple aggregate eval summary from per-frame results.
+    # Only include frames with sufficient LiDAR projections for reliable metrics.
+    MIN_LIDAR_POINTS_FOR_EVAL = 1000
+
+    eval_summary: Dict[str, Any] = {
+        "has_lidar_eval": False,
+        "frames_with_eval": 0,
+        "frames_with_sufficient_lidar": 0,
+        "min_lidar_points_threshold": MIN_LIDAR_POINTS_FOR_EVAL,
+    }
     classical_maes = []
     neural_maes = []
+    classical_maes_aligned = []
+    neural_maes_aligned = []
+
     for fr in frames:
         er = getattr(fr, "eval_results", {})
-        if er.get("has_lidar"):
+        num_lidar = er.get("num_lidar_points_projected", 0)
+
+        if er.get("has_lidar") and num_lidar >= MIN_LIDAR_POINTS_FOR_EVAL:
             eval_summary["has_lidar_eval"] = True
+            eval_summary["frames_with_sufficient_lidar"] += 1
             eval_summary["frames_with_eval"] += 1
-            if "classical" in er and "mae" in er["classical"]:
-                classical_maes.append(er["classical"]["mae"])
-            if "neural" in er and "mae" in er["neural"]:
-                neural_maes.append(er["neural"]["mae"])
+            er["used_for_summary"] = True
+        elif er.get("has_lidar"):
+            er["used_for_summary"] = False
+            eval_summary["has_lidar_eval"] = True
+        else:
+            er["used_for_summary"] = False
+
+            c = er.get("classical", {})
+            n = er.get("neural", {})
+
+            if "mae" in c:
+                classical_maes.append(c["mae"])
+            if "mae" in n:
+                neural_maes.append(n["mae"])
+
+            # Also collect scale-aligned MAEs when available
+            if "aligned" in c and "mae" in c["aligned"]:
+                classical_maes_aligned.append(c["aligned"]["mae"])
+            if "aligned" in n and "mae" in n["aligned"]:
+                neural_maes_aligned.append(n["aligned"]["mae"])
+        elif er.get("has_lidar"):
+            # Frame had LiDAR but not enough points → still mark that we saw LiDAR data
+            eval_summary["has_lidar_eval"] = True
 
     if classical_maes:
         eval_summary["classical_mean_mae"] = float(np.mean(classical_maes))
     if neural_maes:
         eval_summary["neural_mean_mae"] = float(np.mean(neural_maes))
+
+    if classical_maes_aligned:
+        eval_summary["classical_mean_mae_aligned"] = float(np.mean(classical_maes_aligned))
+    if neural_maes_aligned:
+        eval_summary["neural_mean_mae_aligned"] = float(np.mean(neural_maes_aligned))
 
     # --- Optional TSDF fusion (only if requested and open3d available) ---
     tsdf_classical = None

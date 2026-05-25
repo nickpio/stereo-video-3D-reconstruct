@@ -112,13 +112,20 @@ def compute_disparity(
     right_rect: np.ndarray,
     *,
     min_disp: int = 0,
-    num_disp: int = 160,   # multiple of 16, larger for ~1m baseline @ nuScenes res
-    block_size: int = 7,
-    uniqueness: int = 12,
-    speckle_window: int = 150,
+    num_disp: int = 256,   # Increased for better coverage on nuScenes (was 160)
+    block_size: int = 5,   # Slightly smaller for finer details
+    uniqueness: int = 10,
+    speckle_window: int = 200,
     speckle_range: int = 2,
+    use_wls: bool = True,
 ) -> np.ndarray:
-    """Semi-global block matching. Returns disparity in pixels (float32, NaN for invalid)."""
+    """Semi-global block matching with optional WLS post-filtering.
+
+    Returns disparity in pixels (float32, NaN for invalid regions).
+
+    WLS (Weighted Least Squares) filtering significantly improves the quality
+    and density of the disparity map when opencv-contrib is available.
+    """
     if num_disp % 16 != 0:
         num_disp = ((num_disp // 16) + 1) * 16
 
@@ -128,16 +135,47 @@ def compute_disparity(
         blockSize=block_size,
         P1=8 * 3 * block_size * block_size,
         P2=32 * 3 * block_size * block_size,
-        disp12MaxDiff=2,
+        disp12MaxDiff=1,
         uniquenessRatio=uniqueness,
         speckleWindowSize=speckle_window,
         speckleRange=speckle_range,
         mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY,
     )
-    disp = sgbm.compute(left_rect, right_rect).astype(np.float32) / 16.0
+
+    disp_left = sgbm.compute(left_rect, right_rect).astype(np.float32) / 16.0
+
+    if use_wls:
+        try:
+            import cv2.ximgproc as ximgproc
+            # Create right matcher
+            sgbm_right = cv2.StereoSGBM_create(
+                minDisparity=min_disp,
+                numDisparities=num_disp,
+                blockSize=block_size,
+                P1=8 * 3 * block_size * block_size,
+                P2=32 * 3 * block_size * block_size,
+                disp12MaxDiff=1,
+                uniquenessRatio=uniqueness,
+                speckleWindowSize=speckle_window,
+                speckleRange=speckle_range,
+                mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY,
+            )
+            disp_right = sgbm_right.compute(right_rect, left_rect).astype(np.float32) / 16.0
+
+            # WLS Filter
+            wls = ximgproc.createDisparityWLSFilter(matcher_left=sgbm)
+            wls.setLambda(8000)
+            wls.setSigmaColor(1.5)
+            filtered_disp = wls.filter(disp_left, left_rect, disparity_map_right=disp_right)
+
+            disp_left = filtered_disp
+        except (ImportError, AttributeError):
+            # ximgproc not available (opencv-contrib not installed)
+            pass
+
     # Mark clearly invalid
-    disp[disp <= min_disp] = np.nan
-    return disp
+    disp_left[disp_left <= min_disp] = np.nan
+    return disp_left
 
 
 def disparity_to_depth_rect(
@@ -199,8 +237,9 @@ def compute_classical_stereo(
     *,
     min_depth: float = 2.0,
     max_depth: float = 80.0,
-    num_disp: int = 160,
-    block_size: int = 7,
+    num_disp: int = 256,
+    block_size: int = 5,
+    use_wls: bool = True,
     use_devkit_calibration: bool = True,
 ) -> Dict[str, Any]:
     """End-to-end classical stereo for one pair.
@@ -210,8 +249,8 @@ def compute_classical_stereo(
     calibrated_sensor records). This is the "proper" path requested for
     rigorous use of nuScenes calibrations.
 
-    The math is equivalent to the previous manual chaining, but now explicitly
-    sourced from the devkit for traceability and maintainability.
+    WLS post-filtering (when available via opencv-contrib) dramatically
+    improves disparity density and quality.
 
     Returns:
       - rect: RectificationData
@@ -239,7 +278,12 @@ def compute_classical_stereo(
     rect = compute_rectification(K1, K2, R, t, img_size)
 
     left_r, right_r = rectify_images(left_img, right_img, rect)
-    disp = compute_disparity(left_r, right_r, num_disp=num_disp, block_size=block_size)
+    disp = compute_disparity(
+        left_r, right_r,
+        num_disp=num_disp,
+        block_size=block_size,
+        use_wls=use_wls,
+    )
     depth_r = disparity_to_depth_rect(disp, rect, min_depth=min_depth, max_depth=max_depth)
 
     pts, cols = depth_to_pointcloud(

@@ -8,7 +8,9 @@ Usage examples:
   python scripts/run_demo.py --list-scenes
   python scripts/run_demo.py --scene scene-0061 --num-frames 3 --eval
   python scripts/run_demo.py --scene scene-0061 --num-frames 2 --fusion tsdf --eval
-  python scripts/run_demo.py --scene scene-0061 --num-frames 1 --no-neural
+
+  # One-command complete sample (recommended for verification)
+  python scripts/run_demo.py --complete-sample --scene scene-0061
 """
 
 from __future__ import annotations
@@ -63,6 +65,8 @@ def parse_args() -> argparse.Namespace:
     # Item 3
     p.add_argument("--neural-model", choices=["mono", "stereo"], default="mono",
                    help="Neural depth model type (mono = default Depth-Anything-V2, stereo = stereo-consistent variant)")
+    p.add_argument("--complete-sample", action="store_true",
+                   help="Run a full end-to-end showcase: enables --eval, --fusion tsdf (if open3d available), --save-previews, and sensible defaults. Ideal for verification.")
     return p.parse_args()
 
 
@@ -72,6 +76,27 @@ def get_loader() -> NuScenesStereoLoader:
 
 def main() -> int:
     args = parse_args()
+
+    # Apply complete-sample preset (final polish / easy verification)
+    if args.complete_sample:
+        print("=== COMPLETE SAMPLE MODE ENABLED ===")
+        args.eval = True
+        args.save_previews = True
+        if fusion_mod.HAS_OPEN3D:
+            args.fusion = "tsdf"
+            print("  → TSDF fusion enabled (Open3D available)")
+        else:
+            args.fusion = "points"
+            print("  → Falling back to point cloud accumulation (Open3D not found)")
+        if not args.no_neural and args.neural_model == "mono":
+            # Prefer stereo model for the showcase when available
+            args.neural_model = "stereo"
+        if args.num_frames == 4:  # only override if user used the default
+            args.num_frames = 3
+        if args.output_dir is None:
+            args.output_dir = f"complete_sample_{args.scene}"
+        print(f"  → Using {args.num_frames} frames, output → {args.output_dir}")
+        print("=" * 40)
 
     loader = get_loader()
 
@@ -136,15 +161,18 @@ def main() -> int:
           f"Points: classical={rec.stats.get('total_points_classical',0):,}, "
           f"neural={rec.stats.get('total_points_neural',0):,}")
     if rec.eval_summary.get("has_lidar_eval"):
+        frames_used = rec.eval_summary.get("frames_with_sufficient_lidar", rec.eval_summary.get("frames_with_eval", 0))
+        total_frames = len(rec.frames)
         print(f"  Eval (LiDAR): classical_mae={rec.eval_summary.get('classical_mean_mae'):.2f}, "
-              f"neural_mae={rec.eval_summary.get('neural_mean_mae'):.2f}")
+              f"neural_mae={rec.eval_summary.get('neural_mean_mae'):.2f} "
+              f"(over {frames_used}/{total_frames} frames with ≥1000 LiDAR points)")
+
         if rec.frames:
             first_eval = rec.frames[0].eval_results
             c = first_eval.get("classical", {})
             n = first_eval.get("neural", {})
-            print(f"         % valid pixels: classical={c.get('percent_valid', 0):.1f}%, "
-                  f"neural={n.get('percent_valid', 0):.1f}% "
-                  f"(out of {first_eval.get('num_lidar_points_projected', 0)} LiDAR projections)")
+            print(f"         % valid pixels (example frame): classical={c.get('percent_valid', 0):.1f}%, "
+                  f"neural={n.get('percent_valid', 0):.1f}%")
 
             # Show scale-aligned metrics (the trustworthy ones)
             c_al = c.get("aligned", {})
@@ -257,6 +285,8 @@ def main() -> int:
     print("  - Compare classical (geometric) vs neural (learned) structure.")
     print("  - LiDAR PLY + new --eval gives quantitative MAE/RMSE vs GT (see reconstruction_stats.json).")
     print("  - Try --fusion tsdf (requires open3d) for dense surface reconstruction.")
+    if args.complete_sample:
+        print("  - This was a --complete-sample run — all major features exercised.")
     print("=" * 60)
 
     return 0
