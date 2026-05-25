@@ -476,12 +476,36 @@ def export_reconstruction(
         p = out_dir / "surface_classical.ply"
         save_pointcloud_ply(rec.tsdf_classical.points, rec.tsdf_classical.colors, p)
         written["surface_classical"] = str(p)
-        # TODO: could also save mesh using o3d.io.write_triangle_mesh if mesh data present
+
+        # Save mesh if available (better for full 3D reconstruction)
+        if HAS_OPEN3D and rec.tsdf_classical.mesh_vertices is not None and rec.tsdf_classical.mesh_triangles is not None:
+            try:
+                mesh = o3d.geometry.TriangleMesh()
+                mesh.vertices = o3d.utility.Vector3dVector(rec.tsdf_classical.mesh_vertices)
+                mesh.triangles = o3d.utility.Vector3iVector(rec.tsdf_classical.mesh_triangles)
+                if rec.tsdf_classical.colors is not None and len(rec.tsdf_classical.colors) == len(rec.tsdf_classical.mesh_vertices):
+                    mesh.vertex_colors = o3d.utility.Vector3dVector(rec.tsdf_classical.colors.astype(np.float64) / 255.0)
+                o3d.io.write_triangle_mesh(str(out_dir / "surface_classical_mesh.ply"), mesh)
+                written["surface_classical_mesh"] = str(out_dir / "surface_classical_mesh.ply")
+            except Exception as e:
+                print(f"  [warn] Failed to save classical TSDF mesh: {e}")
 
     if rec.tsdf_neural is not None and rec.tsdf_neural.has_surface:
         p = out_dir / "surface_neural.ply"
         save_pointcloud_ply(rec.tsdf_neural.points, rec.tsdf_neural.colors, p)
         written["surface_neural"] = str(p)
+
+        if HAS_OPEN3D and rec.tsdf_neural.mesh_vertices is not None and rec.tsdf_neural.mesh_triangles is not None:
+            try:
+                mesh = o3d.geometry.TriangleMesh()
+                mesh.vertices = o3d.utility.Vector3dVector(rec.tsdf_neural.mesh_vertices)
+                mesh.triangles = o3d.utility.Vector3iVector(rec.tsdf_neural.mesh_triangles)
+                if rec.tsdf_neural.colors is not None and len(rec.tsdf_neural.colors) == len(rec.tsdf_neural.mesh_vertices):
+                    mesh.vertex_colors = o3d.utility.Vector3dVector(rec.tsdf_neural.colors.astype(np.float64) / 255.0)
+                o3d.io.write_triangle_mesh(str(out_dir / "surface_neural_mesh.ply"), mesh)
+                written["surface_neural_mesh"] = str(out_dir / "surface_neural_mesh.ply")
+            except Exception as e:
+                print(f"  [warn] Failed to save neural TSDF mesh: {e}")
 
     # Stats
     stats_path = out_dir / "reconstruction_stats.json"
@@ -499,6 +523,8 @@ def export_reconstruction(
                 "mode": getattr(rec, "stats", {}).get("fusion_mode", "points"),
                 "tsdf_classical_points": int(len(rec.tsdf_classical.points)) if rec.tsdf_classical and rec.tsdf_classical.points is not None else 0,
                 "tsdf_neural_points": int(len(rec.tsdf_neural.points)) if rec.tsdf_neural and rec.tsdf_neural.points is not None else 0,
+                "tsdf_classical_integrated_frames": getattr(rec.tsdf_classical, 'num_integrated_frames', 0) if rec.tsdf_classical else 0,
+                "tsdf_neural_integrated_frames": getattr(rec.tsdf_neural, 'num_integrated_frames', 0) if rec.tsdf_neural else 0,
             },
             "per_frame": [
                 {

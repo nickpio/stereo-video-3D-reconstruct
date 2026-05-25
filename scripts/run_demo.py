@@ -218,6 +218,7 @@ def main() -> int:
     print("  - pointcloud_*.ply         : global fused maps (open in Open3D / CloudCompare / MeshLab)")
     if args.fusion == "tsdf":
         print("  - surface_*.ply            : TSDF extracted surface points (when successful)")
+        print("  - surface_*_mesh.ply       : TSDF triangle mesh (when available)")
     print("  - reconstruction_stats.json: summary numbers + eval (if --eval)")
     if args.save_previews:
         print("  - preview_*_3d.png         : quick 3D scatter previews")
