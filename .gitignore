@@ -45,7 +45,7 @@ outputs/
 *.jpg
 !docs/*.png
 !pipeline/assets/*.png
-
+GROK.md
 # Model caches (transformers, torch)
 .cache/
 huggingface/
