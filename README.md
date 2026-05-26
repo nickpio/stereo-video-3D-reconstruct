@@ -4,11 +4,24 @@ Classical (OpenCV SGBM) + Neural (Depth-Anything-V2) stereo/monodepth reconstruc
 
 ## Features
 
-- Classical (SGBM) and neural (Depth-Anything-V2) depth from stereo pairs (CAM_FRONT_LEFT / RIGHT)
+- Classical (SGBM) and neural (Depth-Anything-V2) depth from stereo pairs (default: fixed CAM_FRONT_LEFT + CAM_FRONT_RIGHT; use `--dynamic-pairs` for per-frame best-overlap selection)
 - LiDAR-grounded evaluation (MAE, RMSE, % valid pixels). Aggregate statistics are computed **only over frames with sufficient LiDAR coverage** (`num_lidar_points_projected > 1000` by default). Each per-frame evaluation includes a `used_for_summary` flag.
 - Proper devkit-based stereo rectification
 - Multi-frame fusion (point cloud or TSDF via Open3D)
 - Side-by-side 3D visualization of classical vs neural reconstructions
+
+### Dynamic Camera Pair Selection (`--dynamic-pairs`)
+
+The `--dynamic-pairs` flag enables per-frame best-overlap selection using geometric metrics instead of the fixed FL+FR pair (CAM_FRONT_LEFT + CAM_FRONT_RIGHT).
+
+Example command:
+```bash
+python scripts/run_demo.py --scene scene-0061 --dynamic-pairs --num-frames 5 --eval
+```
+
+Selection info (chosen cameras, overlap/quality) is printed during the run.
+
+This is powered by the underlying `compute_pair_overlap_metrics` function. The pipeline remains fully compatible with both modes (fixed pair is the default when the flag is omitted).
 
 ## Evaluation Notes
 

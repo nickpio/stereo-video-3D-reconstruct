@@ -66,6 +66,13 @@ class FrameResult:
     # Evaluation vs LiDAR (populated when available)
     eval_results: Dict[str, Any] = field(default_factory=dict)
 
+    # Phase 4 dynamic pair selection metadata (sourced from StereoPair in process_frame).
+    # Added with defaults for non-breaking compatibility with any prior FrameResult constructions.
+    selected_pair_channels: Optional[Tuple[str, str]] = None
+    overlap_score: float = 0.0
+    quality_score: float = 0.0
+    selection_strategy: str = "fixed"
+
 
 @dataclass
 class Reconstruction:
@@ -254,6 +261,11 @@ def process_frame(
         classical_stats=c_stats,
         neural_info=neural_info,
         eval_results=eval_res,
+        # Phase 4: propagate selection metadata from StereoPair (non-breaking for pair objects without attrs)
+        selected_pair_channels=getattr(pair, "selected_pair_channels", None),
+        overlap_score=getattr(pair, "overlap_score", 0.0),
+        quality_score=getattr(pair, "quality_score", 0.0),
+        selection_strategy=getattr(pair, "selection_strategy", "fixed"),
     )
 
 
@@ -341,7 +353,9 @@ def accumulate_reconstruction(
         print(f"  [warn] Could not load LiDAR reference: {e}")
 
     # Simple aggregate eval summary from per-frame results.
-    # Only include frames with sufficient LiDAR projections for reliable metrics.
+    # Only include frames with sufficient LiDAR projections (>=1000) for reliable metrics.
+    # For the per-method means, further require num_valid > 0 (i.e. at least some
+    # predicted depths matched valid GT after range clipping) to avoid NaN pollution.
     MIN_LIDAR_POINTS_FOR_EVAL = 1000
 
     eval_summary: Dict[str, Any] = {
@@ -358,28 +372,37 @@ def accumulate_reconstruction(
     for fr in frames:
         er = getattr(fr, "eval_results", {})
         num_lidar = er.get("num_lidar_points_projected", 0)
+        has_lidar = bool(er.get("has_lidar"))
+        c = er.get("classical", {}) or {}
+        n = er.get("neural", {}) or {}
+        c_nv = int(c.get("num_valid", 0))
+        n_nv = int(n.get("num_valid", 0))
+        has_valid = (c_nv > 0) or (n_nv > 0)
 
-        if er.get("has_lidar") and num_lidar >= MIN_LIDAR_POINTS_FOR_EVAL:
+        if has_lidar and num_lidar >= MIN_LIDAR_POINTS_FOR_EVAL:
             eval_summary["has_lidar_eval"] = True
             eval_summary["frames_with_sufficient_lidar"] += 1
-            eval_summary["frames_with_eval"] += 1
-            er["used_for_summary"] = True
+            if has_valid:
+                eval_summary["frames_with_eval"] += 1
+            # Mark as used for summary only if it actually contributes usable (non-nan) metrics
+            er["used_for_summary"] = bool(has_valid)
 
-            c = er.get("classical", {})
-            n = er.get("neural", {})
+            if c_nv > 0 and "mae" in c and np.isfinite(c["mae"]):
+                classical_maes.append(float(c["mae"]))
+            if n_nv > 0 and "mae" in n and np.isfinite(n["mae"]):
+                neural_maes.append(float(n["mae"]))
 
-            if "mae" in c:
-                classical_maes.append(c["mae"])
-            if "mae" in n:
-                neural_maes.append(n["mae"])
+            # Also collect scale-aligned MAEs when available (and valid)
+            ca = c.get("aligned", {}) or {}
+            na = n.get("aligned", {}) or {}
+            ca_nv = int(ca.get("num_valid", 0))
+            na_nv = int(na.get("num_valid", 0))
+            if ca_nv > 0 and "mae" in ca and np.isfinite(ca["mae"]):
+                classical_maes_aligned.append(float(ca["mae"]))
+            if na_nv > 0 and "mae" in na and np.isfinite(na["mae"]):
+                neural_maes_aligned.append(float(na["mae"]))
 
-            # Also collect scale-aligned MAEs when available
-            if "aligned" in c and "mae" in c["aligned"]:
-                classical_maes_aligned.append(c["aligned"]["mae"])
-            if "aligned" in n and "mae" in n["aligned"]:
-                neural_maes_aligned.append(n["aligned"]["mae"])
-
-        elif er.get("has_lidar"):
+        elif has_lidar:
             # Frame had some LiDAR but below threshold
             er["used_for_summary"] = False
             eval_summary["has_lidar_eval"] = True
@@ -578,6 +601,12 @@ def export_reconstruction(
                 "tsdf_classical_integrated_frames": getattr(rec.tsdf_classical, 'num_integrated_frames', 0) if rec.tsdf_classical else 0,
                 "tsdf_neural_integrated_frames": getattr(rec.tsdf_neural, 'num_integrated_frames', 0) if rec.tsdf_neural else 0,
             },
+            # Phase 4: top-level pair_selection summary (derived from enriched per-frame data; empty for old runs)
+            "pair_selection": {
+                "strategy": (getattr(rec.frames[0], "selection_strategy", None) if rec.frames else None),
+                "num_frames_with_selection": len(rec.frames),
+                "dynamic_pairs_count": sum(1 for fr in rec.frames if getattr(fr, "selection_strategy", None) == "best_overlap"),
+            } if rec.frames and any(getattr(fr, "selected_pair_channels", None) for fr in rec.frames) else {},
             "per_frame": [
                 {
                     "sample": fr.sample_token[:10],
@@ -585,6 +614,11 @@ def export_reconstruction(
                     "n_neural": fr.n_points_neural,
                     "classical_median_depth": fr.classical_stats.get("median_depth"),
                     "eval": getattr(fr, "eval_results", {}),
+                    # Phase 4: include selection metadata from StereoPair (via FrameResult); safe for old runs
+                    "selected_pair_channels": getattr(fr, "selected_pair_channels", None),
+                    "overlap_score": getattr(fr, "overlap_score", None),
+                    "quality_score": getattr(fr, "quality_score", None),
+                    "selection_strategy": getattr(fr, "selection_strategy", None),
                 }
                 for fr in rec.frames
             ],

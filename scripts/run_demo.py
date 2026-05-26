@@ -9,6 +9,9 @@ Usage examples:
   python scripts/run_demo.py --scene scene-0061 --num-frames 3 --eval
   python scripts/run_demo.py --scene scene-0061 --num-frames 2 --fusion tsdf --eval
 
+  # Phase 2 dynamic pair selection demo (uses loader.get_dynamic_stereo_sequence)
+  python scripts/run_demo.py --scene scene-0061 --dynamic-pairs --num-frames 3 --no-neural --eval
+
   # One-command complete sample (recommended for verification)
   python scripts/run_demo.py --complete-sample --scene scene-0061
 """
@@ -67,6 +70,10 @@ def parse_args() -> argparse.Namespace:
                    help="Neural depth model type (mono = default Depth-Anything-V2, stereo = stereo-consistent variant)")
     p.add_argument("--complete-sample", action="store_true",
                    help="Run a full end-to-end showcase: enables --eval, --fusion tsdf (if open3d available), --save-previews, and sensible defaults. Ideal for verification.")
+    # Phase 2: dynamic pair selection integration (defaults to False for full BC with prior fixed behavior)
+    p.add_argument("--dynamic-pairs", action="store_true",
+                   help="Use dynamic best-overlap pair selection (calls loader.get_dynamic_stereo_sequence / pair_strategy='best_overlap'). "
+                        "Prints selected channels + overlap/quality scores. Fixed mode unchanged when flag omitted.")
     return p.parse_args()
 
 
@@ -113,15 +120,36 @@ def main() -> int:
     print(f"Neural enabled: {not args.no_neural}")
 
     # 1. Load sequence
-    print("\n[1/5] Loading stereo sequence (CAM_FRONT_LEFT + CAM_FRONT_RIGHT)...")
-    t0 = time.time()
-    pairs: List[StereoPair] = loader.get_stereo_sequence(
-        scene_name, max_frames=args.num_frames
-    )
+    # Phase 2: conditional dynamic dispatch (get_dynamic_stereo_sequence when flag set; else exact prior call+message for BC)
+    if args.dynamic_pairs:
+        print("\n[1/5] Loading stereo sequence with dynamic best-overlap pair selection...")
+        t0 = time.time()
+        pairs: List[StereoPair] = loader.get_dynamic_stereo_sequence(
+            scene_name, max_frames=args.num_frames
+        )
+    else:
+        print("\n[1/5] Loading stereo sequence (CAM_FRONT_LEFT + CAM_FRONT_RIGHT)...")
+        t0 = time.time()
+        pairs: List[StereoPair] = loader.get_stereo_sequence(
+            scene_name, max_frames=args.num_frames
+        )
     if not pairs:
         print(f"ERROR: No stereo pairs found for scene {scene_name}")
         return 2
     print(f"  Loaded {len(pairs)} stereo pairs (dt={time.time()-t0:.1f}s)")
+
+    # Phase 2 lightweight stats/logging of dynamic selection (only when active; first few frames + histogram summary)
+    if args.dynamic_pairs and pairs:
+        print("  Dynamic selection (selected channels + overlap/quality for first frames):")
+        for ii, pp in enumerate(pairs[:min(3, len(pairs))]):
+            chans = pp.selected_pair_channels or (pp.left.channel, pp.right.channel)
+            print(f"    frame {ii}: pair={chans}  overlap={pp.overlap_score:.4f}  quality={pp.quality_score:.4f}  strat={pp.selection_strategy}")
+        # simple histogram (no extra imports)
+        pair_hist: dict = {}
+        for pp in pairs:
+            key = pp.selected_pair_channels or (pp.left.channel, pp.right.channel)
+            pair_hist[key] = pair_hist.get(key, 0) + 1
+        print(f"  Selection histogram across sequence: {pair_hist}")
 
     # 2. Neural model (optional)
     neural_model = None
@@ -164,7 +192,7 @@ def main() -> int:
         frames_used = rec.eval_summary.get("frames_with_sufficient_lidar", rec.eval_summary.get("frames_with_eval", 0))
         total_frames = len(rec.frames)
         print(f"  Eval (LiDAR): classical_mae={rec.eval_summary.get('classical_mean_mae'):.2f}, "
-              f"neural_mae={rec.eval_summary.get('neural_mean_mae'):.2f} "
+              f"neural_mae={(rec.eval_summary.get('neural_mean_mae') or 0):.2f} "
               f"(over {frames_used}/{total_frames} frames with ≥1000 LiDAR points)")
 
         if rec.frames:
