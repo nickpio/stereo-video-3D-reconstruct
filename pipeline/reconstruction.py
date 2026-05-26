@@ -279,7 +279,7 @@ def accumulate_reconstruction(
     max_points_per_frame: int = 80_000,
     voxel_size: float = 0.15,  # for optional downsample on globals
     # Phase 3+ options (accepted for CLI compatibility; full use in later wiring)
-    fusion_mode: str = "points",
+    fusion_mode: str = "tsdf",
     do_eval: bool = False,
     tsdf_voxel_size: float = 0.08,
     neural_model_type: str = "mono",  # "mono" or "stereo" (Item 3)
@@ -595,7 +595,7 @@ def export_reconstruction(
             },
             "eval_summary": rec.eval_summary,
             "fusion": {
-                "mode": getattr(rec, "stats", {}).get("fusion_mode", "points"),
+                "mode": getattr(rec, "stats", {}).get("fusion_mode", "tsdf"),
                 "tsdf_classical_points": int(len(rec.tsdf_classical.points)) if rec.tsdf_classical and rec.tsdf_classical.points is not None else 0,
                 "tsdf_neural_points": int(len(rec.tsdf_neural.points)) if rec.tsdf_neural and rec.tsdf_neural.points is not None else 0,
                 "tsdf_classical_integrated_frames": getattr(rec.tsdf_classical, 'num_integrated_frames', 0) if rec.tsdf_classical else 0,

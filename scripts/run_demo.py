@@ -7,7 +7,7 @@ and quantitative LiDAR evaluation.
 Usage examples:
   python scripts/run_demo.py --list-scenes
   python scripts/run_demo.py --scene scene-0061 --num-frames 3 --eval
-  python scripts/run_demo.py --scene scene-0061 --num-frames 2 --fusion tsdf --eval
+  python scripts/run_demo.py --scene scene-0061 --num-frames 2 --fusion points --eval  # disable TSDF
 
   # Phase 2 dynamic pair selection demo (uses loader.get_dynamic_stereo_sequence)
   python scripts/run_demo.py --scene scene-0061 --dynamic-pairs --num-frames 3 --no-neural --eval
@@ -61,8 +61,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--voxel", type=float, default=0.15, help="Voxel size for global PLY downsampling")
     p.add_argument("--max-points", type=int, default=60000, help="Max points kept per frame (memory)")
     # New in Phase 3 (plan)
-    p.add_argument("--fusion", choices=["points", "tsdf"], default="points",
-                   help="Multi-frame fusion mode: 'points' (default, fast) or 'tsdf' (dense surface, requires open3d)")
+    p.add_argument("--fusion", choices=["points", "tsdf"], default="tsdf",
+                   help="Multi-frame fusion mode: 'tsdf' (default, dense surface, requires open3d) or 'points' (fast)")
     p.add_argument("--eval", action="store_true", help="Compute quantitative metrics vs LiDAR GT (uses project_lidar)")
     p.add_argument("--voxel-size", type=float, default=0.08, help="TSDF voxel size (meters) when --fusion tsdf")
     # Item 3
@@ -313,7 +313,7 @@ def main() -> int:
     print("  - For interactive 3D: python -c 'import open3d as o3d; o3d.visualization.draw_geometries([o3d.io.read_point_cloud(\"pointcloud_classical.ply\")])'")
     print("  - Compare classical (geometric) vs neural (learned) structure.")
     print("  - LiDAR PLY + new --eval gives quantitative MAE/RMSE vs GT (see reconstruction_stats.json).")
-    print("  - Try --fusion tsdf (requires open3d) for dense surface reconstruction.")
+    print("  - Use --fusion points to disable TSDF (faster, no Open3D required).")
     if args.complete_sample:
         print("  - This was a --complete-sample run — all major features exercised.")
     print("=" * 60)

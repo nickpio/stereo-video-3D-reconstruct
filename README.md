@@ -23,6 +23,26 @@ Selection info (chosen cameras, overlap/quality) is printed during the run.
 
 This is powered by the underlying `compute_pair_overlap_metrics` function. The pipeline remains fully compatible with both modes (fixed pair is the default when the flag is omitted).
 
+## Pipeline Overview
+
+The pipeline processes nuScenes stereo video sequences through these main stages:
+
+1. **Stereo Pair Selection** — Loads synchronized camera pairs. Defaults to fixed `CAM_FRONT_LEFT` + `CAM_FRONT_RIGHT`. With `--dynamic-pairs`, it selects the best-overlapping pair per frame using geometric overlap + baseline metrics.
+
+2. **Depth Estimation** — Computes depth using classical stereo (OpenCV SGBM) and neural depth (Depth-Anything-V2, mono or stereo).
+
+3. **LiDAR Evaluation** — Projects LiDAR points into images to compute quantitative metrics (MAE, RMSE, % valid) for both depth sources.
+
+4. **Multi-frame Fusion** — Fuses per-frame depth into a global 3D model using either point clouds or dense TSDF (via Open3D).
+
+5. **Visualization & Export** — Generates comparison images/video, point clouds, surface meshes (with TSDF), and 3D previews.
+
+The most complete and accurate results are produced with:
+```bash
+python scripts/run_demo.py --complete-sample --dynamic-pairs --scene scene-0061
+```
+This combination enables dynamic pair selection, TSDF fusion, stereo neural depth, full evaluation, and rich visualizations.
+
 ## Evaluation Notes
 
 When `--eval` is used:

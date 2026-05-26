@@ -85,21 +85,25 @@ def make_comparison_image(
 
     # === Handle low-validity frames with clear overlays (Item 5 polish) ===
     if frame_eval is not None:
-        def add_no_valid_overlay(target_img, method_name, metrics, x_offset, y_offset):
+        def add_no_valid_overlay(target_img, method_name, metrics, x_offset, y_offset, reason=None):
             """Draw semi-transparent box + text overlay for invalid depth.
-            Symmetrically shows %valid + aligned MAE (preferred) for both Classical and Neural panels when low validity.
+
+            Distinguishes two cases:
+            - Classical failed due to poor stereo overlap/texture → still show neural
+            - Neural depth is invalid or has insufficient LiDAR overlap for reliable eval
             """
             overlay = target_img.copy()
-            box_h, box_w = small_h // 2, small_w - 20
-            cv2.rectangle(overlay, (x_offset + 10, y_offset + 30),
-                          (x_offset + 10 + box_w, y_offset + 30 + box_h),
+            box_h, box_w = int(small_h * 0.58), small_w - 20
+            cv2.rectangle(overlay, (x_offset + 10, y_offset + 25),
+                          (x_offset + 10 + box_w, y_offset + 25 + box_h),
                           (0, 0, 0), -1)
-            alpha = 0.75
+            alpha = 0.78
             cv2.addWeighted(overlay, alpha, target_img, 1 - alpha, 0, target_img)
 
-            # Main message (include method for clarity/symmetry)
-            cv2.putText(target_img, f"No valid depth ({method_name})", (x_offset + 20, y_offset + 55),
-                        font, 0.6, (0, 0, 255), 2, cv2.LINE_AA)
+            # Main message - use specific reason when provided
+            msg = reason or f"No valid depth ({method_name})"
+            cv2.putText(target_img, msg, (x_offset + 20, y_offset + 50),
+                        font, 0.55, (0, 0, 255), 2, cv2.LINE_AA)
 
             # Metrics - prefer aligned MAE (trustworthy per eval docs); show both for transparency
             pct = metrics.get("percent_valid", 0)
@@ -110,21 +114,34 @@ def make_comparison_image(
                 text = f"{pct:.1f}% valid | raw MAE={raw_mae:.1f} | aligned MAE={al_mae:.1f}"
             else:
                 text = f"{pct:.1f}% valid | MAE={raw_mae:.1f}"
-            cv2.putText(target_img, text, (x_offset + 20, y_offset + 80),
-                        font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
+            cv2.putText(target_img, text, (x_offset + 20, y_offset + 78),
+                        font, 0.38, (255, 255, 255), 1, cv2.LINE_AA)
 
         c_eval = frame_eval.get("classical", {})
         n_eval = frame_eval.get("neural", {})
+        num_lidar = frame_eval.get("num_lidar_points_projected", 0)
 
-        # Threshold for "no valid" (can be tuned)
-        c_bad = c_eval.get("percent_valid", 100) < 5 or c_eval.get("num_valid", 9999) < 200
-        n_bad = n_eval.get("percent_valid", 100) < 5 or n_eval.get("num_valid", 9999) < 200
+        # Smarter distinction:
+        # - Classical "bad" usually means stereo matching failed (poor texture, bad overlap, etc.).
+        #   We still want to show the neural result in this case.
+        # - Neural is only marked bad if it has genuinely poor LiDAR agreement *and* there
+        #   was enough LiDAR in the first place to make the judgment meaningful.
+        has_decent_lidar = num_lidar >= 800
+
+        c_bad = c_eval.get("percent_valid", 100) < 8 or c_eval.get("num_valid", 0) < 300
+        n_bad = (n_eval.get("percent_valid", 100) < 8 or n_eval.get("num_valid", 0) < 300) and has_decent_lidar
 
         if c_bad:
-            add_no_valid_overlay(panel, "Classical", c_eval, small_w + gap, 0)
+            add_no_valid_overlay(
+                panel, "Classical", c_eval, small_w + gap, 0,
+                reason="Classical failed (poor overlap/texture)"
+            )
 
         if n_bad:
-            add_no_valid_overlay(panel, "Neural", n_eval, 0, small_h + gap)
+            add_no_valid_overlay(
+                panel, "Neural", n_eval, 0, small_h + gap,
+                reason="Neural invalid or insufficient LiDAR overlap"
+            )
 
     return panel
 
