@@ -86,7 +86,9 @@ def make_comparison_image(
     # === Handle low-validity frames with clear overlays (Item 5 polish) ===
     if frame_eval is not None:
         def add_no_valid_overlay(target_img, method_name, metrics, x_offset, y_offset):
-            """Draw semi-transparent box + text overlay for invalid depth."""
+            """Draw semi-transparent box + text overlay for invalid depth.
+            Symmetrically shows %valid + aligned MAE (preferred) for both Classical and Neural panels when low validity.
+            """
             overlay = target_img.copy()
             box_h, box_w = small_h // 2, small_w - 20
             cv2.rectangle(overlay, (x_offset + 10, y_offset + 30),
@@ -95,16 +97,21 @@ def make_comparison_image(
             alpha = 0.75
             cv2.addWeighted(overlay, alpha, target_img, 1 - alpha, 0, target_img)
 
-            # Main message
-            cv2.putText(target_img, "No valid depth", (x_offset + 20, y_offset + 55),
-                        font, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
+            # Main message (include method for clarity/symmetry)
+            cv2.putText(target_img, f"No valid depth ({method_name})", (x_offset + 20, y_offset + 55),
+                        font, 0.6, (0, 0, 255), 2, cv2.LINE_AA)
 
-            # Metrics
+            # Metrics - prefer aligned MAE (trustworthy per eval docs); show both for transparency
             pct = metrics.get("percent_valid", 0)
-            mae = metrics.get("mae", float("nan"))
-            text = f"{pct:.1f}% valid | MAE={mae:.1f}"
+            raw_mae = metrics.get("mae", float("nan"))
+            al = metrics.get("aligned", {}) or {}
+            al_mae = al.get("mae", float("nan"))
+            if np.isfinite(al_mae):
+                text = f"{pct:.1f}% valid | raw MAE={raw_mae:.1f} | aligned MAE={al_mae:.1f}"
+            else:
+                text = f"{pct:.1f}% valid | MAE={raw_mae:.1f}"
             cv2.putText(target_img, text, (x_offset + 20, y_offset + 80),
-                        font, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+                        font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
 
         c_eval = frame_eval.get("classical", {})
         n_eval = frame_eval.get("neural", {})
